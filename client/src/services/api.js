@@ -61,4 +61,11 @@ export const examplesAPI = {
     get: (id) => api.get(`/examples/${id}`),
 };
 
+// === Execution ===
+export const executionAPI = {
+    listModels: () => api.get('/execution/models'),
+    runSpec: (specId, data) => api.post(`/execution/${specId}/run`, data),
+};
+
 export default api;
+

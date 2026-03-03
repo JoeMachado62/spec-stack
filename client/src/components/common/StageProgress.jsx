@@ -1,9 +1,9 @@
-export default function StageProgress({ currentStage = 1, completenessScore = 0 }) {
+export default function StageProgress({ currentStage = 1, completenessScore = 0, showTechnicalHints = false }) {
     const stages = [
-        { num: 1, label: 'Clear Instructions', icon: '✏️' },
-        { num: 2, label: 'What the AI Needs to Know', icon: '📋' },
-        { num: 3, label: 'What the AI Should Care About', icon: '🎯' },
-        { num: 4, label: 'The Master Plan', icon: '🚀' },
+        { num: 1, label: 'Clear Instructions', tech: 'Prompt Craft', icon: '✏️' },
+        { num: 2, label: 'What the AI Needs to Know', tech: 'Context Engineering', icon: '📋' },
+        { num: 3, label: 'What the AI Should Care About', tech: 'Intent Engineering', icon: '🎯' },
+        { num: 4, label: 'The Master Plan', tech: 'Specification Engineering', icon: '🚀' },
     ];
 
     return (
@@ -33,9 +33,17 @@ export default function StageProgress({ currentStage = 1, completenessScore = 0 
                             }`}
                     >
                         <span className="text-base">{s.icon}</span>
-                        <span className={`flex-1 ${s.num === currentStage ? 'font-medium' : ''}`}>
-                            {s.label}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                            <span className={`block ${s.num === currentStage ? 'font-medium' : ''}`}>
+                                {s.label}
+                            </span>
+                            {/* Progressive vocabulary — PRD Section 10.2 */}
+                            {showTechnicalHints && (
+                                <span className="block text-[0.625rem] text-[var(--color-text-muted)] italic mt-0.5">
+                                    {s.tech}
+                                </span>
+                            )}
+                        </div>
                         {s.num < currentStage && (
                             <span className="text-xs font-medium text-[var(--color-accent-green)]">✓ Done</span>
                         )}

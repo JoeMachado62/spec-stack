@@ -7,14 +7,19 @@ import {
     MiniMap,
     useNodesState,
     useEdgesState,
+    addEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Rocket, CheckCircle, XCircle, AlertTriangle, FileText, Eye, Layers } from 'lucide-react';
+import { Rocket, CheckCircle, XCircle, AlertTriangle, FileText, Eye, Layers, Plus, Trash2, Save } from 'lucide-react';
+import { specsAPI } from '../../services/api';
 
-export default function Stage4SpecEng({ specId }) {
+export default function Stage4SpecEng({ specId, onRunSpec }) {
     const { specification, processStage4, stageLoading, completenessScore } = useSpecStore();
     const [viewMode, setViewMode] = useState('visual'); // visual | spec | export
     const [generated, setGenerated] = useState(false);
+    const [newNodeLabel, setNewNodeLabel] = useState('');
+    const [showAddNode, setShowAddNode] = useState(false);
+    const [flowchartDirty, setFlowchartDirty] = useState(false);
 
     const stage4 = specification?.stage_4_spec;
     const flowchart = specification?.visual_flowchart;
@@ -37,8 +42,8 @@ export default function Stage4SpecEng({ specId }) {
                         <div className="text-xs font-medium">{node.label}</div>
                         {node.constraint_type && (
                             <span className={`badge mt-1 ${node.constraint_type === 'must' ? 'badge-must' :
-                                    node.constraint_type === 'must_not' ? 'badge-must-not' :
-                                        node.constraint_type === 'escalation' ? 'badge-escalation' : 'badge-preference'
+                                node.constraint_type === 'must_not' ? 'badge-must-not' :
+                                    node.constraint_type === 'escalation' ? 'badge-escalation' : 'badge-preference'
                                 }`}>
                                 {node.constraint_type === 'must' ? '🟢 Required' :
                                     node.constraint_type === 'must_not' ? '🔴 Blocked' :
@@ -46,9 +51,11 @@ export default function Stage4SpecEng({ specId }) {
                             </span>
                         )}
                     </div>
-                )
+                ),
+                raw_label: node.label,
+                constraint_type: node.constraint_type,
             },
-            type: node.type === 'decision' ? 'default' : 'default',
+            type: 'default',
             style: {
                 background: node.type === 'decision'
                     ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.15))'
@@ -80,6 +87,72 @@ export default function Stage4SpecEng({ specId }) {
         if (initialNodes.length > 0) setNodes(initialNodes);
         if (initialEdges.length > 0) setEdges(initialEdges);
     }, [initialNodes, initialEdges]);
+
+    // === Bidirectional Flowchart Editing (PRD Section 8.4-8.5) ===
+
+    // Add a new node from plain language (PRD: "User types a plain-language action")
+    const handleAddNode = () => {
+        if (!newNodeLabel.trim()) return;
+        const newId = `node-${Date.now()}`;
+        const newNode = {
+            id: newId,
+            position: { x: 50 + nodes.length * 60, y: 50 + nodes.length * 80 },
+            data: {
+                label: (
+                    <div className="text-center">
+                        <div className="text-xs font-medium">{newNodeLabel}</div>
+                        <span className="badge badge-must mt-1">🟢 Required</span>
+                    </div>
+                ),
+                raw_label: newNodeLabel,
+                constraint_type: 'must',
+            },
+            type: 'default',
+        };
+        setNodes((nds) => [...nds, newNode]);
+        setNewNodeLabel('');
+        setShowAddNode(false);
+        setFlowchartDirty(true);
+    };
+
+    // Delete selected nodes
+    const handleDeleteSelected = () => {
+        const selectedNodeIds = nodes.filter(n => n.selected).map(n => n.id);
+        if (selectedNodeIds.length === 0) return;
+        setNodes((nds) => nds.filter(n => !selectedNodeIds.includes(n.id)));
+        setEdges((eds) => eds.filter(e => !selectedNodeIds.includes(e.source) && !selectedNodeIds.includes(e.target)));
+        setFlowchartDirty(true);
+    };
+
+    // Connect two nodes by dragging an edge
+    const onConnect = useCallback((params) => {
+        setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#5a6070' } }, eds));
+        setFlowchartDirty(true);
+    }, []);
+
+    // Save flowchart changes back to the spec (bidirectional sync)
+    const handleSaveFlowchart = async () => {
+        try {
+            const updatedFlowchart = {
+                nodes: nodes.map(n => ({
+                    id: n.id,
+                    label: n.data.raw_label || 'Step',
+                    type: 'action',
+                    constraint_type: n.data.constraint_type || 'must',
+                })),
+                edges: edges.map(e => ({
+                    id: e.id,
+                    source: e.source,
+                    target: e.target,
+                    label: e.label || '',
+                })),
+            };
+            await specsAPI.updateFlowchart(specId, updatedFlowchart);
+            setFlowchartDirty(false);
+        } catch (err) {
+            console.error('Failed to save flowchart:', err);
+        }
+    };
 
     // Not yet generated
     if (!stage4 || (!stage4.problem_statement && !generated)) {
@@ -135,25 +208,80 @@ export default function Stage4SpecEng({ specId }) {
                 </button>
             </div>
 
-            {/* Visual Flowchart */}
+            {/* Visual Flowchart — with editing controls (PRD Section 8.4) */}
             {viewMode === 'visual' && (
-                <div className="glass-card overflow-hidden" style={{ height: '500px' }}>
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        fitView
-                        attributionPosition="bottom-left"
-                    >
-                        <Controls />
-                        <Background color="#2a2b3d" gap={20} />
-                        <MiniMap
-                            nodeColor="#8b5cf6"
-                            maskColor="rgba(10, 11, 15, 0.8)"
-                            style={{ background: '#12131a' }}
-                        />
-                    </ReactFlow>
+                <div className="space-y-3">
+                    {/* Editing toolbar */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowAddNode(!showAddNode)}
+                            className="btn-secondary text-xs"
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <Plus className="w-3.5 h-3.5" /> Add Step
+                            </span>
+                        </button>
+                        <button
+                            onClick={handleDeleteSelected}
+                            className="btn-ghost text-xs text-[var(--color-accent-red)]"
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <Trash2 className="w-3.5 h-3.5" /> Remove Selected
+                            </span>
+                        </button>
+                        {flowchartDirty && (
+                            <button
+                                onClick={handleSaveFlowchart}
+                                className="btn-primary text-xs animate-pulse-glow"
+                            >
+                                <span className="flex items-center gap-1.5">
+                                    <Save className="w-3.5 h-3.5" /> Save Changes
+                                </span>
+                            </button>
+                        )}
+                        <p className="text-[0.625rem] text-[var(--color-text-muted)] ml-auto">
+                            Drag between nodes to connect • Click to select • Drag to reorder
+                        </p>
+                    </div>
+
+                    {/* Add node input */}
+                    {showAddNode && (
+                        <div className="glass-card p-4 flex items-center gap-3 animate-fade-in">
+                            <input
+                                type="text"
+                                className="input-field flex-1"
+                                placeholder="Describe the step in plain language (e.g., 'Check if the client is new')"
+                                value={newNodeLabel}
+                                onChange={(e) => setNewNodeLabel(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddNode()}
+                                autoFocus
+                            />
+                            <button onClick={handleAddNode} className="btn-primary text-xs" disabled={!newNodeLabel.trim()}>
+                                <span>Add</span>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* React Flow canvas */}
+                    <div className="glass-card overflow-hidden" style={{ height: '500px' }}>
+                        <ReactFlow
+                            nodes={nodes}
+                            edges={edges}
+                            onNodesChange={(changes) => { onNodesChange(changes); if (changes.some(c => c.type === 'position' && c.dragging === false)) setFlowchartDirty(true); }}
+                            onEdgesChange={onEdgesChange}
+                            onConnect={onConnect}
+                            fitView
+                            attributionPosition="bottom-left"
+                        >
+                            <Controls />
+                            <Background color="#2a2b3d" gap={20} />
+                            <MiniMap
+                                nodeColor="#8b5cf6"
+                                maskColor="rgba(10, 11, 15, 0.8)"
+                                style={{ background: '#12131a' }}
+                            />
+                        </ReactFlow>
+                    </div>
                 </div>
             )}
 
@@ -271,7 +399,7 @@ export default function Stage4SpecEng({ specId }) {
                 </div>
             )}
 
-            {/* Summary/Export View */}
+            {/* Summary/Export View — with Run This Spec (PRD Section 14.3) */}
             {viewMode === 'export' && (
                 <div className="glass-card p-8 text-center">
                     <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center">
@@ -306,8 +434,14 @@ export default function Stage4SpecEng({ specId }) {
                     </div>
 
                     <div className="flex items-center justify-center gap-3">
-                        <button className="btn-primary">
-                            <span>🚀 Run This Spec (Coming Soon)</span>
+                        <button
+                            onClick={onRunSpec}
+                            className="btn-primary animate-pulse-glow"
+                        >
+                            <span className="flex items-center gap-2">
+                                <Rocket className="w-4 h-4" />
+                                Run This Spec
+                            </span>
                         </button>
                     </div>
                 </div>

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSpecStore, useProjectStore } from '../../store';
+import { useSpecStore, useProjectStore, useAuthStore } from '../../store';
 import StageProgress from '../common/StageProgress';
 import ScoreRing from '../common/ScoreRing';
 import LoadingOverlay from '../common/LoadingOverlay';
+import RunSpecModal from '../common/RunSpecModal';
 import Stage1PromptCraft from '../stages/Stage1PromptCraft';
 import Stage2ContextEng from '../stages/Stage2ContextEng';
 import Stage3IntentEng from '../stages/Stage3IntentEng';
 import Stage4SpecEng from '../stages/Stage4SpecEng';
-import { ArrowLeft, Download, FileText, FileJson, File } from 'lucide-react';
+import { ArrowLeft, FileText, FileJson, File, Rocket } from 'lucide-react';
 import { specsAPI } from '../../services/api';
 
 export default function SpecBuilderPage() {
@@ -16,7 +17,9 @@ export default function SpecBuilderPage() {
     const navigate = useNavigate();
     const { specification, completenessScore, gaps, fetchSpecification, stageLoading, loading } = useSpecStore();
     const { currentProject, fetchProject } = useProjectStore();
+    const { user } = useAuthStore();
     const [exporting, setExporting] = useState(false);
+    const [showRunModal, setShowRunModal] = useState(false);
 
     useEffect(() => {
         if (specId) fetchSpecification(specId);
@@ -56,6 +59,10 @@ export default function SpecBuilderPage() {
 
     const currentStage = specification.current_stage || 1;
 
+    // Progressive vocabulary (PRD Section 10.2)
+    const sessionCount = user?.session_count || 0;
+    const showTechnicalHints = sessionCount >= 4;
+
     const stageMessages = {
         1: 'Turning your idea into clear instructions...',
         2: 'Building the information your AI needs...',
@@ -66,6 +73,13 @@ export default function SpecBuilderPage() {
     return (
         <div className="p-8 max-w-6xl mx-auto">
             {stageLoading && <LoadingOverlay message={stageMessages[currentStage]} />}
+
+            {/* Run This Spec Modal */}
+            <RunSpecModal
+                specId={specId}
+                isOpen={showRunModal}
+                onClose={() => setShowRunModal(false)}
+            />
 
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
@@ -115,6 +129,20 @@ export default function SpecBuilderPage() {
                             </button>
                         </div>
                     )}
+
+                    {/* 🚀 Run This Spec — PRD Section 14.3 */}
+                    {currentStage >= 4 && specification.stage_4_spec && (
+                        <button
+                            id="run-this-spec-btn"
+                            onClick={() => setShowRunModal(true)}
+                            className="btn-primary animate-pulse-glow"
+                        >
+                            <span className="flex items-center gap-2">
+                                <Rocket className="w-4 h-4" />
+                                Run This Spec
+                            </span>
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -125,12 +153,16 @@ export default function SpecBuilderPage() {
                     {currentStage === 1 && <Stage1PromptCraft specId={specId} />}
                     {currentStage === 2 && <Stage2ContextEng specId={specId} />}
                     {currentStage === 3 && <Stage3IntentEng specId={specId} />}
-                    {currentStage >= 4 && <Stage4SpecEng specId={specId} />}
+                    {currentStage >= 4 && <Stage4SpecEng specId={specId} onRunSpec={() => setShowRunModal(true)} />}
                 </div>
 
                 {/* Sidebar */}
                 <div className="space-y-4">
-                    <StageProgress currentStage={currentStage} completenessScore={completenessScore} />
+                    <StageProgress
+                        currentStage={currentStage}
+                        completenessScore={completenessScore}
+                        showTechnicalHints={showTechnicalHints}
+                    />
 
                     {/* Gap Summary */}
                     {gaps && gaps.length > 0 && (

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSpecStore } from '../../store';
 import { BookOpen, Send, Upload } from 'lucide-react';
+import SignalMeter from '../common/SignalMeter';
 
 export default function Stage2ContextEng({ specId }) {
     const { specification, processStage2, stageLoading } = useSpecStore();
@@ -104,6 +105,13 @@ For example:
                             </p>
                             <p className="text-xs text-[var(--color-brand-primary)] mt-2">Coming soon — Notion & Google Drive integration</p>
                         </div>
+
+                        {/* Signal-to-Noise Meter — PRD Section 6.2 */}
+                        <SignalMeter
+                            level={additionalContext.length > 5000 ? 'red' : additionalContext.length > 2000 ? 'yellow' : 'green'}
+                            currentItems={Math.min(Math.ceil(additionalContext.length / 500), 10)}
+                            maxItems={10}
+                        />
                     </div>
 
                     <button
