@@ -1,26 +1,67 @@
 /**
- * AI Service — LangChain + Google Gemini Integration
- * Handles all AI-powered operations for the 4-stage workflow
+ * AI Service — LangChain Multi-Model Integration
+ * Priority: Gemini 2.0 Flash → GPT-5.2 Codex → Claude Opus 4.5
+ *
+ * Model API IDs as of March 2026 (per official docs):
+ *   Google:    gemini-2.0-flash          (stable; 3.1-pro-preview not GA yet)
+ *   OpenAI:    gpt-5.2-codex             (most capable agentic coding model)
+ *              gpt-5.2                   (flagship general)
+ *              gpt-5.2-pro               (more compute, harder reasoning)
+ *   Anthropic: claude-opus-4-5-20251101  (latest Opus as of Nov 2025)
  */
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
+const { ChatOpenAI } = require('@langchain/openai');
+const { ChatAnthropic } = require('@langchain/anthropic');
 const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
 const { PromptTemplate } = require('@langchain/core/prompts');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
-// Initialize Gemini model
+// Valid Gemini keys start with AIzaSy and are 39 chars
+const isValidGeminiKey = (k) => k && k.startsWith('AIzaSy') && k.length === 39;
+
 const getModel = (temperature = 0.7) => {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-        throw new Error('Missing GEMINI_API_KEY or GOOGLE_API_KEY environment variable');
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+    if (isValidGeminiKey(geminiKey)) {
+        console.log('[AI] Using Gemini 2.0 Flash (primary)');
+        return new ChatGoogleGenerativeAI({
+            model: 'gemini-2.0-flash',
+            apiKey: geminiKey,
+            temperature,
+            maxOutputTokens: 8192,
+        });
     }
-    return new ChatGoogleGenerativeAI({
-        model: 'gemini-2.0-flash',
-        apiKey,
-        temperature,
-        maxOutputTokens: 8192,
-    });
+
+    if (openaiKey) {
+        // gpt-5.2-codex: most capable agentic coding model per OpenAI docs Mar 2026
+        console.log('[AI] Gemini key invalid — falling back to GPT-5.2 Codex');
+        return new ChatOpenAI({
+            model: 'gpt-5.2-codex',
+            apiKey: openaiKey,
+            temperature,
+            maxTokens: 8192,
+        });
+    }
+
+    if (anthropicKey) {
+        console.log('[AI] Falling back to Claude Opus 4.5');
+        return new ChatAnthropic({
+            model: 'claude-opus-4-5-20251101',
+            apiKey: anthropicKey,
+            temperature,
+            maxTokens: 8192,
+        });
+    }
+
+    throw new Error('No valid AI API keys. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env');
 };
+
+
+
+
 
 /**
  * Stage 1: Prompt Craft — Transform raw idea into structured prompt
