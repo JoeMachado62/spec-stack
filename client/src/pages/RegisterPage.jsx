@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuthStore } from '../../store';
+import { useAuthStore } from '../store';
 import { Layers, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const BUSINESS_TYPES = [

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useProjectStore } from '../../store';
-import ScoreRing from '../common/ScoreRing';
+import { useProjectStore } from '../store';
+import ScoreRing from '../components/common/ScoreRing';
 import { Plus, FolderOpen, ArrowRight, Trash2, Clock, Sparkles } from 'lucide-react';
 
 export default function DashboardPage() {

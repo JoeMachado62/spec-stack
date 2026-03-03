@@ -24,7 +24,16 @@ app.use(helmet({
 }));
 
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin) return callback(null, true);
+        // Allow localhost and VPS IP
+        const allowedPatterns = [/localhost/, /127\.0\.0\.1/, /187\.77\.207\.153/];
+        if (allowedPatterns.some(p => p.test(origin))) return callback(null, true);
+        // Also allow any origin in development
+        if (process.env.NODE_ENV !== 'production') return callback(null, true);
+        callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
 
@@ -98,8 +107,8 @@ const startServer = async () => {
         await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
         console.log('✅ Database models synced.');
 
-        app.listen(PORT, () => {
-            console.log(`🚀 Spec Stack API running on http://localhost:${PORT}`);
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 Spec Stack API running on http://0.0.0.0:${PORT}`);
             console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
         });
     } catch (error) {

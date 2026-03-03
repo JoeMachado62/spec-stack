@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../../store';
+import { useAuthStore } from '../store';
 import { Layers, ArrowRight, Sparkles, Target, Rocket, BookOpen, Zap, Shield } from 'lucide-react';
 
 export default function LandingPage() {

@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSpecStore, useProjectStore, useAuthStore } from '../../store';
-import StageProgress from '../common/StageProgress';
-import ScoreRing from '../common/ScoreRing';
-import LoadingOverlay from '../common/LoadingOverlay';
-import RunSpecModal from '../common/RunSpecModal';
-import Stage1PromptCraft from '../stages/Stage1PromptCraft';
-import Stage2ContextEng from '../stages/Stage2ContextEng';
-import Stage3IntentEng from '../stages/Stage3IntentEng';
-import Stage4SpecEng from '../stages/Stage4SpecEng';
+import { useSpecStore, useProjectStore, useAuthStore } from '../store';
+import StageProgress from '../components/common/StageProgress';
+import ScoreRing from '../components/common/ScoreRing';
+import LoadingOverlay from '../components/common/LoadingOverlay';
+import RunSpecModal from '../components/common/RunSpecModal';
+import Stage1PromptCraft from '../components/stages/Stage1PromptCraft';
+import Stage2ContextEng from '../components/stages/Stage2ContextEng';
+import Stage3IntentEng from '../components/stages/Stage3IntentEng';
+import Stage4SpecEng from '../components/stages/Stage4SpecEng';
 import { ArrowLeft, FileText, FileJson, File, Rocket } from 'lucide-react';
-import { specsAPI } from '../../services/api';
+import { specsAPI } from '../services/api';
 
 export default function SpecBuilderPage() {
     const { projectId, specId } = useParams();
