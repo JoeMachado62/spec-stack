@@ -135,7 +135,7 @@ export default function LandingPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
                         {[
-                            { icon: <Shield className="w-7 h-7 text-[var(--color-accent-green)]" />, bg: 'bg-[var(--color-accent-green)]/10', title: 'No jargon. Ever.', sub: 'We translate engineering concepts into plain language. You'll never be asked about "constraint architectures."' },
+                            { icon: <Shield className="w-7 h-7 text-[var(--color-accent-green)]" />, bg: 'bg-[var(--color-accent-green)]/10', title: 'No jargon. Ever.', sub: 'We translate engineering concepts into plain language. You\'ll never be asked about "constraint architectures."' },
                             { icon: <Zap className="w-7 h-7 text-[var(--color-accent-yellow)]" />, bg: 'bg-[var(--color-accent-yellow)]/10', title: 'Show, don\'t ask.', sub: 'We show you completed examples from businesses like yours — you edit them instead of building from scratch.' },
                             { icon: <Rocket className="w-7 h-7 text-[var(--color-accent-cyan)]" />, bg: 'bg-[var(--color-accent-cyan)]/10', title: 'One-click launch.', sub: 'Export as Markdown, claude.md, or JSON — or launch directly to Gemini, Claude, or ChatGPT.' },
                         ].map((f, i) => (
