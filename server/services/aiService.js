@@ -10,9 +10,13 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
 // Initialize Gemini model
 const getModel = (temperature = 0.7) => {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!apiKey) {
+        throw new Error('Missing GEMINI_API_KEY or GOOGLE_API_KEY environment variable');
+    }
     return new ChatGoogleGenerativeAI({
-        modelName: 'gemini-2.0-flash',
-        apiKey: process.env.GEMINI_API_KEY,
+        model: 'gemini-2.0-flash',
+        apiKey,
         temperature,
         maxOutputTokens: 8192,
     });

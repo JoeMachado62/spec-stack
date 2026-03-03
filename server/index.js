@@ -18,6 +18,9 @@ const executionRoutes = require('./routes/execution');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust Caddy reverse proxy (fixes X-Forwarded-For for rate limiting)
+app.set('trust proxy', 1);
+
 // === Middleware ===
 app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' }
