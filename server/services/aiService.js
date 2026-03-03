@@ -1,13 +1,14 @@
 /**
  * AI Service — LangChain Multi-Model Integration
- * Priority: Gemini 2.0 Flash → GPT-5.2 Codex → Claude Opus 4.5
+ * Priority: Gemini 3.1 Pro → GPT-5.2 Codex → Claude Opus 4.5
  *
- * Model API IDs as of March 2026 (per official docs):
- *   Google:    gemini-2.0-flash          (stable; 3.1-pro-preview not GA yet)
+ * Model API IDs as of March 2026:
+ *   Google:    gemini-3.1-pro-preview    (latest frontier, released Feb 19 2026)
  *   OpenAI:    gpt-5.2-codex             (most capable agentic coding model)
- *              gpt-5.2                   (flagship general)
- *              gpt-5.2-pro               (more compute, harder reasoning)
- *   Anthropic: claude-opus-4-5-20251101  (latest Opus as of Nov 2025)
+ *   Anthropic: claude-opus-4-5-20251101  (latest Opus)
+ *
+ * The getModel() factory tries the best available provider.
+ * The invokeWithFallback() wrapper retries on the next provider if a call fails.
  */
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { ChatOpenAI } = require('@langchain/openai');
@@ -20,43 +21,88 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 // Valid Gemini keys start with AIzaSy and are 39 chars
 const isValidGeminiKey = (k) => k && k.startsWith('AIzaSy') && k.length === 39;
 
-const getModel = (temperature = 0.7) => {
+/**
+ * Build an ordered list of model instances to try.
+ * Returns an array so invokeWithFallback can try each in order.
+ */
+const getModelChain = (temperature = 0.7) => {
     const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    const chain = [];
 
     if (isValidGeminiKey(geminiKey)) {
-        console.log('[AI] Using Gemini 2.0 Flash (primary)');
-        return new ChatGoogleGenerativeAI({
-            model: 'gemini-2.0-flash',
-            apiKey: geminiKey,
-            temperature,
-            maxOutputTokens: 8192,
+        chain.push({
+            name: 'Gemini 3.1 Pro',
+            instance: new ChatGoogleGenerativeAI({
+                model: 'gemini-3.1-pro-preview',
+                apiKey: geminiKey,
+                temperature,
+                maxOutputTokens: 8192,
+            }),
         });
     }
 
     if (openaiKey) {
-        // gpt-5.2-codex: most capable agentic coding model per OpenAI docs Mar 2026
-        console.log('[AI] Gemini key invalid — falling back to GPT-5.2 Codex');
-        return new ChatOpenAI({
-            model: 'gpt-5.2-codex',
-            apiKey: openaiKey,
-            temperature,
-            maxTokens: 8192,
+        chain.push({
+            name: 'GPT-5.2 Codex',
+            instance: new ChatOpenAI({
+                model: 'gpt-5.2-codex',
+                apiKey: openaiKey,
+                temperature,
+                maxTokens: 8192,
+            }),
         });
     }
 
     if (anthropicKey) {
-        console.log('[AI] Falling back to Claude Opus 4.5');
-        return new ChatAnthropic({
-            model: 'claude-opus-4-5-20251101',
-            apiKey: anthropicKey,
-            temperature,
-            maxTokens: 8192,
+        chain.push({
+            name: 'Claude Opus 4.5',
+            instance: new ChatAnthropic({
+                model: 'claude-opus-4-5-20251101',
+                apiKey: anthropicKey,
+                temperature,
+                maxTokens: 8192,
+            }),
         });
     }
 
-    throw new Error('No valid AI API keys. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env');
+    if (chain.length === 0) {
+        throw new Error('No valid AI API keys. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env');
+    }
+    return chain;
+};
+
+// Backward-compat: return first available model
+const getModel = (temperature = 0.7) => {
+    const chain = getModelChain(temperature);
+    console.log(`[AI] Using ${chain[0].name} (primary)`);
+    return chain[0].instance;
+};
+
+/**
+ * Invoke messages with automatic fallback through the model chain.
+ * If the primary model fails (network, API key, quota, model retired, etc.),
+ * it automatically tries the next provider.
+ */
+const invokeWithFallback = async (messages, temperature = 0.7) => {
+    const chain = getModelChain(temperature);
+
+    for (let i = 0; i < chain.length; i++) {
+        const { name, instance } = chain[i];
+        try {
+            console.log(`[AI] Trying ${name}${i > 0 ? ' (fallback)' : ''}...`);
+            const response = await instance.invoke(messages);
+            console.log(`[AI] ✅ ${name} succeeded`);
+            return response;
+        } catch (err) {
+            console.error(`[AI] ❌ ${name} failed: ${err.message?.substring(0, 120)}`);
+            if (i === chain.length - 1) {
+                throw err; // Last provider — rethrow
+            }
+            console.log(`[AI] Trying next provider...`);
+        }
+    }
 };
 
 
@@ -67,8 +113,6 @@ const getModel = (temperature = 0.7) => {
  * Stage 1: Prompt Craft — Transform raw idea into structured prompt
  */
 async function generateStructuredPrompt(rawInput, businessType, matchedExample = null) {
-    const model = getModel(0.7);
-
     const exampleContext = matchedExample
         ? `Here is a similar example from a ${matchedExample.business_type} business:\n${JSON.stringify(matchedExample.full_spec?.stage_1 || {}, null, 2)}\n\nUse this as structural inspiration but adapt to the user's specific business.`
         : '';
@@ -101,7 +145,7 @@ User's raw idea: "${rawInput}"
 Transform this into a structured prompt.`)
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.7);
 
     try {
         const content = response.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -123,7 +167,6 @@ Transform this into a structured prompt.`)
  * Stage 2: Context Engineering — Build context bundle
  */
 async function generateContextBundle(stage1Prompt, businessType, userDocuments = []) {
-    const model = getModel(0.5);
 
     const docContext = userDocuments.length > 0
         ? `The user has provided these documents:\n${userDocuments.map(d => `- ${d.filename}: ${d.content_text?.substring(0, 500) || 'No content'}`).join('\n')}`
@@ -159,7 +202,7 @@ ${JSON.stringify(stage1Prompt, null, 2)}
 Build the context bundle.`)
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.5);
 
     try {
         const content = response.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -182,7 +225,6 @@ Build the context bundle.`)
  * Stage 3: Intent Engineering — Extract goals, trade-offs, escalation triggers
  */
 async function generateIntentFramework(stage1Prompt, stage2Context, businessType, tradeoffAnswers = {}) {
-    const model = getModel(0.6);
 
     const tradeoffContext = Object.keys(tradeoffAnswers).length > 0
         ? `The user has answered these trade-off questions:\n${JSON.stringify(tradeoffAnswers, null, 2)}`
@@ -218,7 +260,7 @@ Stage 2 Context: ${JSON.stringify(stage2Context, null, 2)}
 Generate the intent framework.`)
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.6);
 
     try {
         const content = response.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -242,7 +284,6 @@ Generate the intent framework.`)
  * Stage 4: Specification Engineering — Assemble five primitives + flowchart
  */
 async function generateFullSpecification(stage1, stage2, stage3, businessType) {
-    const model = getModel(0.4);
 
     const messages = [
         new SystemMessage(`You are Spec Stack's Specification Engineering engine. Assemble a complete, agent-executable specification from the outputs of Stages 1-3.
@@ -280,7 +321,7 @@ Stage 3 (Intent): ${JSON.stringify(stage3, null, 2)}
 Generate the complete specification with all five primitives and a visual flowchart.`)
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.4);
 
     try {
         const content = response.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -302,7 +343,6 @@ Generate the complete specification with all five primitives and a visual flowch
  * Export: Generate Markdown spec
  */
 async function generateMarkdownExport(specification) {
-    const model = getModel(0.3);
 
     const messages = [
         new SystemMessage(`Convert the following specification JSON into a clean, well-structured Markdown document suitable for an autonomous AI agent to execute against.
@@ -321,7 +361,7 @@ Output ONLY the markdown content, nothing else.`),
         new HumanMessage(JSON.stringify(specification, null, 2))
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.3);
     return response.content;
 }
 
@@ -329,7 +369,6 @@ Output ONLY the markdown content, nothing else.`),
  * Export: Generate claude.md format
  */
 async function generateClaudeMdExport(specification) {
-    const model = getModel(0.3);
 
     const messages = [
         new SystemMessage(`Convert the following specification into a claude.md-compatible format. This is the format used by Claude Code and Claude agents as their operating instructions.
@@ -349,7 +388,7 @@ Output ONLY the claude.md content, nothing else.`),
         new HumanMessage(JSON.stringify(specification, null, 2))
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.3);
     return response.content;
 }
 
@@ -358,8 +397,6 @@ Output ONLY the claude.md content, nothing else.`),
  */
 async function findDomainMatch(rawInput, businessType, examples) {
     if (!examples || examples.length === 0) return null;
-
-    const model = getModel(0.3);
     const messages = [
         new SystemMessage(`You are a domain-matching engine. Given a user's business type and task description, identify which example from the library is the best structural match.
 
@@ -384,7 +421,7 @@ Available examples:
 ${examples.map(e => `- ID: ${e.example_id}, Business: ${e.business_type}, Task: ${e.title}, Pattern: ${e.task_pattern}`).join('\n')}`)
     ];
 
-    const response = await model.invoke(messages);
+    const response = await invokeWithFallback(messages, 0.3);
     try {
         const content = response.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         return JSON.parse(content);
