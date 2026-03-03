@@ -232,6 +232,39 @@ export const useSpecStore = create((set, get) => ({
         }
     },
 
+    updateStageData: async (specId, stageNum, data) => {
+        set({ stageLoading: true, error: null });
+        try {
+            const { data: result } = await specsAPI.updateStage(specId, stageNum, data);
+            const stageField = `stage_${stageNum === 1 ? '1_prompt' : stageNum === 2 ? '2_context' : stageNum === 3 ? '3_intent' : '4_spec'}`;
+            set((state) => ({
+                specification: {
+                    ...state.specification,
+                    [stageField]: result[`stage_${stageNum}`],
+                    completeness_score: result.completeness_score,
+                },
+                completenessScore: result.completeness_score,
+                stageLoading: false,
+            }));
+            return result;
+        } catch (err) {
+            set({ error: err.response?.data?.error || 'Failed to update.', stageLoading: false });
+            throw err;
+        }
+    },
+
+    uploadDocuments: async (specId, files) => {
+        set({ stageLoading: true, error: null });
+        try {
+            const { data } = await specsAPI.uploadDocuments(specId, files);
+            set({ stageLoading: false });
+            return data;
+        } catch (err) {
+            set({ error: err.response?.data?.error || 'Failed to upload.', stageLoading: false });
+            throw err;
+        }
+    },
+
     clearError: () => set({ error: null }),
     resetSpec: () => set({ specification: null, completenessScore: 0, gaps: [] }),
 }));

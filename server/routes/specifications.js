@@ -8,7 +8,10 @@ const {
     processStage3,
     processStage4,
     updateFlowchart,
-    exportSpec
+    exportSpec,
+    updateStageData,
+    uploadDocuments,
+    upload,
 } = require('../controllers/specController');
 
 router.use(authenticate);
@@ -21,6 +24,12 @@ router.post('/:specId/stage/1', processStage1);
 router.post('/:specId/stage/2', processStage2);
 router.post('/:specId/stage/3', processStage3);
 router.post('/:specId/stage/4', processStage4);
+
+// Edit stage data (user tweaks AI responses)
+router.patch('/:specId/stage/:stageNum', updateStageData);
+
+// Document upload for Stage 2
+router.post('/:specId/documents', upload.array('files', 10), uploadDocuments);
 
 // Visual flowchart
 router.put('/:specId/flowchart', updateFlowchart);

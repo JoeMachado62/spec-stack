@@ -1,6 +1,28 @@
-const { Specification, Project, Example, TestCase } = require('../models');
+const { Specification, Project, Example, TestCase, Document } = require('../models');
 const aiService = require('../services/aiService');
 const { calculateCompletenessScore, getGapSummary } = require('../utils/completenessScoring');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for document uploads
+const uploadDir = path.resolve(__dirname, '../../uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+});
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (req, file, cb) => {
+        const allowed = ['.pdf', '.docx', '.doc', '.txt', '.md', '.csv'];
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (allowed.includes(ext)) cb(null, true);
+        else cb(new Error(`File type ${ext} not supported. Allowed: ${allowed.join(', ')}`));
+    },
+});
 
 /**
  * Get the current specification for a project
@@ -336,6 +358,103 @@ const exportSpec = async (req, res) => {
     }
 };
 
+/**
+ * PATCH: Edit stage data — allows users to tweak/fix AI responses
+ */
+const updateStageData = async (req, res) => {
+    try {
+        const { stageNum } = req.params;
+        const { data } = req.body;
+        const stage = parseInt(stageNum);
+
+        if (![1, 2, 3, 4].includes(stage)) {
+            return res.status(400).json({ error: 'Invalid stage number. Must be 1-4.' });
+        }
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        const fieldMap = {
+            1: 'stage_1_prompt',
+            2: 'stage_2_context',
+            3: 'stage_3_intent',
+            4: 'stage_4_spec',
+        };
+
+        const field = fieldMap[stage];
+        const currentData = spec[field] || {};
+
+        // Merge the edits into existing data (deep merge top-level keys)
+        spec[field] = { ...currentData, ...data };
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        res.json({
+            [`stage_${stage}`]: spec[field],
+            completeness_score: spec.completeness_score,
+        });
+    } catch (error) {
+        console.error('Update stage error:', error);
+        res.status(500).json({ error: 'Failed to update stage data.' });
+    }
+};
+
+/**
+ * Upload documents for Stage 2 context
+ */
+const uploadDocuments = async (req, res) => {
+    try {
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded.' });
+        }
+
+        const uploaded = [];
+        for (const file of req.files) {
+            // Read text content from file
+            let contentText = '';
+            const ext = path.extname(file.originalname).toLowerCase();
+            if (['.txt', '.md', '.csv'].includes(ext)) {
+                contentText = fs.readFileSync(file.path, 'utf-8');
+            } else {
+                contentText = `[Binary file: ${file.originalname} — ${(file.size / 1024).toFixed(1)}KB]`;
+            }
+
+            // Save to documents table
+            const doc = await Document.create({
+                user_id: req.userId,
+                project_id: spec.project_id,
+                source: 'upload',
+                filename: file.originalname,
+                content_text: contentText.substring(0, 50000), // cap at 50k chars
+                metadata: { size: file.size, mimetype: file.mimetype, path: file.path },
+            });
+
+            uploaded.push({
+                document_id: doc.document_id,
+                filename: doc.filename,
+                size: file.size,
+                content_preview: contentText.substring(0, 200),
+            });
+        }
+
+        res.json({ documents: uploaded, count: uploaded.length });
+    } catch (error) {
+        console.error('Upload documents error:', error);
+        res.status(500).json({ error: 'Failed to upload documents.' });
+    }
+};
+
 module.exports = {
     getSpecification,
     processStage1,
@@ -343,5 +462,8 @@ module.exports = {
     processStage3,
     processStage4,
     updateFlowchart,
-    exportSpec
+    exportSpec,
+    updateStageData,
+    uploadDocuments,
+    upload,
 };

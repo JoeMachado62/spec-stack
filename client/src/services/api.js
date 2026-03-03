@@ -51,6 +51,14 @@ export const specsAPI = {
     processStage2: (specId, data) => api.post(`/specs/${specId}/stage/2`, data),
     processStage3: (specId, data) => api.post(`/specs/${specId}/stage/3`, data),
     processStage4: (specId) => api.post(`/specs/${specId}/stage/4`),
+    updateStage: (specId, stageNum, data) => api.patch(`/specs/${specId}/stage/${stageNum}`, { data }),
+    uploadDocuments: (specId, files) => {
+        const formData = new FormData();
+        files.forEach(f => formData.append('files', f));
+        return api.post(`/specs/${specId}/documents`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+    },
     updateFlowchart: (specId, data) => api.put(`/specs/${specId}/flowchart`, data),
     export: (specId, format) => api.get(`/specs/${specId}/export/${format}`, { responseType: 'blob' }),
 };
