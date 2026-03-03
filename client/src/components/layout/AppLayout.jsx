@@ -117,8 +117,11 @@ export default function AppLayout() {
                 <PanelLeftOpen className="w-4 h-4 text-[var(--color-text-secondary)]" />
             </button>
 
-            {/* Main content — full width minus the thin icon rail on desktop */}
-            <main className={`min-h-screen transition-all duration-300 ${sidebarOpen ? 'lg:ml-[240px]' : 'lg:ml-[60px]'}`}>
+            {/* Main content — always offset from sidebar */}
+            <main
+                className="min-h-screen transition-all duration-300"
+                style={{ marginLeft: sidebarOpen ? '240px' : '60px', padding: '2rem 2.5rem' }}
+            >
                 <Outlet />
             </main>
         </div>
