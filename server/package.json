@@ -1,0 +1,18 @@
+{
+  "name": "spec-stack-server",
+  "version": "1.0.0",
+  "description": "Spec Stack — Backend API Server",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "db:sync": "node scripts/db-sync.js",
+    "db:seed": "node seeds/index.js"
+  },
+  "keywords": [
+    "spec-stack",
+    "ai",
+    "specifications"
+  ],
+  "license": "MIT"
+}

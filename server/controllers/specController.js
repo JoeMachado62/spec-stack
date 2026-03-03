@@ -1,0 +1,347 @@
+const { Specification, Project, Example, TestCase } = require('../models');
+const aiService = require('../services/aiService');
+const { calculateCompletenessScore, getGapSummary } = require('../utils/completenessScoring');
+
+/**
+ * Get the current specification for a project
+ */
+const getSpecification = async (req, res) => {
+    try {
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{
+                model: Project,
+                as: 'project',
+                where: { user_id: req.userId }
+            }, {
+                model: TestCase,
+                as: 'testCases'
+            }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        const gaps = getGapSummary(spec);
+        res.json({
+            specification: spec,
+            completeness_score: spec.completeness_score,
+            gaps
+        });
+    } catch (error) {
+        console.error('Get specification error:', error);
+        res.status(500).json({ error: 'Failed to retrieve specification.' });
+    }
+};
+
+/**
+ * Stage 1: Prompt Craft — Process raw idea
+ */
+const processStage1 = async (req, res) => {
+    try {
+        const { raw_input, business_type } = req.body;
+        if (!raw_input || raw_input.trim().length < 5) {
+            return res.status(400).json({ error: 'Please describe your idea in at least a sentence.' });
+        }
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        // Find domain match
+        const examples = await Example.findAll();
+        let matchedExample = null;
+        let domainMatch = null;
+
+        if (examples.length > 0) {
+            domainMatch = await aiService.findDomainMatch(raw_input, business_type, examples);
+            if (domainMatch?.best_match_id) {
+                matchedExample = examples.find(e => e.example_id === domainMatch.best_match_id);
+            }
+        }
+
+        // Generate structured prompt
+        const structuredPrompt = await aiService.generateStructuredPrompt(raw_input, business_type, matchedExample);
+
+        // Update specification
+        const stage1Data = {
+            raw_input,
+            ...structuredPrompt
+        };
+
+        spec.stage_1_prompt = stage1Data;
+        spec.current_stage = 2;
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        // Update project business type if provided
+        if (business_type) {
+            await Project.update({ business_type }, { where: { project_id: spec.project_id } });
+        }
+
+        res.json({
+            stage_1: stage1Data,
+            domain_match: domainMatch,
+            matched_example: matchedExample ? {
+                business_type: matchedExample.business_type,
+                title: matchedExample.title,
+                task_pattern: matchedExample.task_pattern
+            } : null,
+            completeness_score: spec.completeness_score,
+            next_stage: 2
+        });
+    } catch (error) {
+        console.error('Stage 1 error:', error);
+        res.status(500).json({ error: 'Failed to process your idea. Please try again.' });
+    }
+};
+
+/**
+ * Stage 2: Context Engineering — Build context bundle
+ */
+const processStage2 = async (req, res) => {
+    try {
+        const { additional_context, interview_answers } = req.body;
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        // Generate context bundle from Stage 1 + any user documents
+        const contextBundle = await aiService.generateContextBundle(
+            spec.stage_1_prompt,
+            spec.project.business_type,
+            [] // TODO: Integrate user documents
+        );
+
+        // Merge any additional context or interview answers
+        if (additional_context) {
+            contextBundle.system_prompt_components.push({
+                type: 'user_provided',
+                content: additional_context
+            });
+        }
+
+        if (interview_answers) {
+            contextBundle.interview_responses = interview_answers;
+        }
+
+        spec.stage_2_context = contextBundle;
+        spec.current_stage = 3;
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        res.json({
+            stage_2: contextBundle,
+            completeness_score: spec.completeness_score,
+            signal_level: contextBundle.token_budget?.signal_level || 'green',
+            next_stage: 3
+        });
+    } catch (error) {
+        console.error('Stage 2 error:', error);
+        res.status(500).json({ error: 'Failed to build context. Please try again.' });
+    }
+};
+
+/**
+ * Stage 3: Intent Engineering — Extract goals and trade-offs
+ */
+const processStage3 = async (req, res) => {
+    try {
+        const { tradeoff_answers, worst_case_response } = req.body;
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        const allAnswers = { ...tradeoff_answers };
+        if (worst_case_response) {
+            allAnswers.worst_case = worst_case_response;
+        }
+
+        const intentFramework = await aiService.generateIntentFramework(
+            spec.stage_1_prompt,
+            spec.stage_2_context,
+            spec.project.business_type,
+            allAnswers
+        );
+
+        spec.stage_3_intent = intentFramework;
+        spec.current_stage = 4;
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        res.json({
+            stage_3: intentFramework,
+            completeness_score: spec.completeness_score,
+            next_stage: 4
+        });
+    } catch (error) {
+        console.error('Stage 3 error:', error);
+        res.status(500).json({ error: 'Failed to build intent framework. Please try again.' });
+    }
+};
+
+/**
+ * Stage 4: Specification Engineering — Generate full spec + flowchart
+ */
+const processStage4 = async (req, res) => {
+    try {
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        const fullSpec = await aiService.generateFullSpecification(
+            spec.stage_1_prompt,
+            spec.stage_2_context,
+            spec.stage_3_intent,
+            spec.project.business_type
+        );
+
+        // Update the spec with all five primitives
+        spec.stage_4_spec = {
+            problem_statement: fullSpec.problem_statement,
+            acceptance_criteria: fullSpec.acceptance_criteria,
+            constraint_architecture: fullSpec.constraint_architecture,
+            break_patterns: fullSpec.break_patterns,
+            evaluation_design: fullSpec.evaluation_design
+        };
+
+        spec.visual_flowchart = fullSpec.visual_flowchart || { nodes: [], edges: [] };
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        // Create test cases from evaluation design
+        if (fullSpec.evaluation_design && fullSpec.evaluation_design.length > 0) {
+            await TestCase.destroy({ where: { spec_id: spec.spec_id } });
+            for (const testCase of fullSpec.evaluation_design) {
+                await TestCase.create({
+                    spec_id: spec.spec_id,
+                    input_scenario: testCase.input_scenario || testCase.scenario || '',
+                    expected_output: testCase.expected_output || testCase.expected || '',
+                    pass_condition: testCase.pass_condition || testCase.condition || ''
+                });
+            }
+        }
+
+        const gaps = getGapSummary(spec);
+
+        res.json({
+            stage_4: spec.stage_4_spec,
+            visual_flowchart: spec.visual_flowchart,
+            completeness_score: spec.completeness_score,
+            gaps,
+            test_cases: fullSpec.evaluation_design
+        });
+    } catch (error) {
+        console.error('Stage 4 error:', error);
+        res.status(500).json({ error: 'Failed to generate specification. Please try again.' });
+    }
+};
+
+/**
+ * Update the visual flowchart
+ */
+const updateFlowchart = async (req, res) => {
+    try {
+        const { nodes, edges } = req.body;
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        spec.visual_flowchart = { nodes: nodes || [], edges: edges || [] };
+        spec.completeness_score = calculateCompletenessScore(spec);
+        await spec.save();
+
+        res.json({
+            visual_flowchart: spec.visual_flowchart,
+            completeness_score: spec.completeness_score
+        });
+    } catch (error) {
+        console.error('Update flowchart error:', error);
+        res.status(500).json({ error: 'Failed to update flowchart.' });
+    }
+};
+
+/**
+ * Export specification in various formats
+ */
+const exportSpec = async (req, res) => {
+    try {
+        const { format } = req.params;
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        let content;
+        let contentType;
+        let filename;
+
+        switch (format) {
+            case 'markdown':
+                content = await aiService.generateMarkdownExport(spec);
+                contentType = 'text/markdown';
+                filename = `${spec.project.title.replace(/\s+/g, '-')}-spec.md`;
+                break;
+
+            case 'claude-md':
+                content = await aiService.generateClaudeMdExport(spec);
+                contentType = 'text/markdown';
+                filename = `claude.md`;
+                break;
+
+            case 'json':
+                content = JSON.stringify({
+                    project: spec.project.title,
+                    prompt: spec.stage_1_prompt,
+                    context: spec.stage_2_context,
+                    intent: spec.stage_3_intent,
+                    specification: spec.stage_4_spec,
+                    flowchart: spec.visual_flowchart,
+                    completeness_score: spec.completeness_score
+                }, null, 2);
+                contentType = 'application/json';
+                filename = `${spec.project.title.replace(/\s+/g, '-')}-spec.json`;
+                break;
+
+            default:
+                return res.status(400).json({ error: 'Unsupported format. Use: markdown, claude-md, or json' });
+        }
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(content);
+    } catch (error) {
+        console.error('Export error:', error);
+        res.status(500).json({ error: 'Failed to export specification.' });
+    }
+};
+
+module.exports = {
+    getSpecification,
+    processStage1,
+    processStage2,
+    processStage3,
+    processStage4,
+    updateFlowchart,
+    exportSpec
+};
