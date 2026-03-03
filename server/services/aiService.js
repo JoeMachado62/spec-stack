@@ -5,7 +5,7 @@
  * Model API IDs as of March 2026:
  *   Google:    gemini-3.1-pro-preview    (latest frontier, released Feb 19 2026)
  *   OpenAI:    gpt-5.2-codex             (most capable agentic coding model)
- *   Anthropic: claude-opus-4-5-20251101  (latest Opus)
+ *   Anthropic: claude-opus-4-6            (latest frontier, released Feb 5 2026)
  *
  * The getModel() factory tries the best available provider.
  * The invokeWithFallback() wrapper retries on the next provider if a call fails.
@@ -57,9 +57,9 @@ const getModelChain = (temperature = 0.7) => {
 
     if (anthropicKey) {
         chain.push({
-            name: 'Claude Opus 4.5',
+            name: 'Claude Opus 4.6',
             instance: new ChatAnthropic({
-                model: 'claude-opus-4-5-20251101',
+                model: 'claude-opus-4-6',
                 apiKey: anthropicKey,
                 temperature,
                 maxTokens: 8192,
