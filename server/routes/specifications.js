@@ -12,6 +12,7 @@ const {
     updateStageData,
     uploadDocuments,
     upload,
+    scrapeUrl,
 } = require('../controllers/specController');
 
 router.use(authenticate);
@@ -30,6 +31,9 @@ router.patch('/:specId/stage/:stageNum', updateStageData);
 
 // Document upload for Stage 2
 router.post('/:specId/documents', upload.array('files', 10), uploadDocuments);
+
+// URL scraping for Stage 2
+router.post('/:specId/scrape-url', scrapeUrl);
 
 // Visual flowchart
 router.put('/:specId/flowchart', updateFlowchart);

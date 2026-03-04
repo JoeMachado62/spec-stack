@@ -265,6 +265,18 @@ export const useSpecStore = create((set, get) => ({
         }
     },
 
+    scrapeUrl: async (specId, url) => {
+        set({ stageLoading: true, error: null });
+        try {
+            const { data } = await specsAPI.scrapeUrl(specId, url);
+            set({ stageLoading: false });
+            return data;
+        } catch (err) {
+            set({ error: err.response?.data?.error || 'Failed to scrape URL.', stageLoading: false });
+            throw err;
+        }
+    },
+
     clearError: () => set({ error: null }),
     resetSpec: () => set({ specification: null, completenessScore: 0, gaps: [] }),
 }));

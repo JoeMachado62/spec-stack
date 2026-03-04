@@ -59,6 +59,7 @@ export const specsAPI = {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
     },
+    scrapeUrl: (specId, url) => api.post(`/specs/${specId}/scrape-url`, { url }),
     updateFlowchart: (specId, data) => api.put(`/specs/${specId}/flowchart`, data),
     export: (specId, format) => api.get(`/specs/${specId}/export/${format}`, { responseType: 'blob' }),
 };

@@ -1,15 +1,18 @@
 import { useState, useRef } from 'react';
 import { useSpecStore } from '../../store';
-import { BookOpen, Send, Upload, FileText, X, Check, Pencil } from 'lucide-react';
+import { BookOpen, Send, Upload, FileText, X, Check, Pencil, Globe, Link, Loader2 } from 'lucide-react';
 import SignalMeter from '../common/SignalMeter';
 
 export default function Stage2ContextEng({ specId }) {
-    const { specification, processStage2, updateStageData, uploadDocuments, stageLoading } = useSpecStore();
+    const { specification, processStage2, updateStageData, uploadDocuments, scrapeUrl, stageLoading } = useSpecStore();
     const [additionalContext, setAdditionalContext] = useState('');
     const [uploadedDocs, setUploadedDocs] = useState([]);
     const [uploading, setUploading] = useState(false);
     const [editingField, setEditingField] = useState(null);
     const [editValue, setEditValue] = useState('');
+    const [urlInput, setUrlInput] = useState('');
+    const [scraping, setScraping] = useState(false);
+    const [scrapeError, setScrapeError] = useState('');
     const fileInputRef = useRef(null);
     const stage1 = specification?.stage_1_prompt;
 
@@ -61,6 +64,36 @@ export default function Stage2ContextEng({ specId }) {
 
     const removeDoc = (docId) => {
         setUploadedDocs(prev => prev.filter(d => d.document_id !== docId));
+    };
+
+    // --- URL scraping ---
+    const handleScrapeUrl = async () => {
+        const url = urlInput.trim();
+        if (!url) return;
+        setScraping(true);
+        setScrapeError('');
+        try {
+            const result = await scrapeUrl(specId, url);
+            setUploadedDocs(prev => [...prev, {
+                document_id: result.document.document_id,
+                filename: result.document.filename,
+                size: result.document.chars,
+                content_preview: result.document.content_preview,
+                source_url: result.document.source_url,
+                is_url: true,
+            }]);
+            setUrlInput('');
+        } catch (err) {
+            setScrapeError(err.response?.data?.error || 'Failed to fetch URL');
+        }
+        setScraping(false);
+    };
+
+    const handleUrlKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleScrapeUrl();
+        }
     };
 
     // Editable field renderer
@@ -260,6 +293,44 @@ export default function Stage2ContextEng({ specId }) {
                             />
                         </div>
 
+                        {/* URL scraping */}
+                        <div>
+                            <label className="input-label flex items-center gap-1.5">
+                                <Globe className="w-3.5 h-3.5" />
+                                Add from URL
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    id="stage2-url-input"
+                                    type="url"
+                                    className="input-field flex-1"
+                                    placeholder="Paste a web page or Google Docs link..."
+                                    value={urlInput}
+                                    onChange={(e) => { setUrlInput(e.target.value); setScrapeError(''); }}
+                                    onKeyDown={handleUrlKeyDown}
+                                    disabled={scraping}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleScrapeUrl}
+                                    disabled={scraping || !urlInput.trim()}
+                                    className="btn-primary px-4 py-2 shrink-0 flex items-center gap-1.5"
+                                >
+                                    {scraping ? (
+                                        <><Loader2 className="w-4 h-4 animate-spin" /> Fetching...</>
+                                    ) : (
+                                        <><Link className="w-4 h-4" /> Fetch</>
+                                    )}
+                                </button>
+                            </div>
+                            {scrapeError && (
+                                <p className="text-xs text-red-400 mt-1.5">{scrapeError}</p>
+                            )}
+                            <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                                Works with any public page, Google Docs, and Google Sheets shared links
+                            </p>
+                        </div>
+
                         {/* Document upload — WORKING */}
                         <div>
                             <input
@@ -284,19 +355,26 @@ export default function Stage2ContextEng({ specId }) {
                                 </p>
                             </div>
 
-                            {/* Uploaded files list */}
+                            {/* Uploaded files & scraped URLs list */}
                             {uploadedDocs.length > 0 && (
                                 <div className="mt-3 space-y-2">
+                                    <p className="text-xs font-medium text-[var(--color-text-muted)]">
+                                        {uploadedDocs.length} source{uploadedDocs.length > 1 ? 's' : ''} added to knowledge base
+                                    </p>
                                     {uploadedDocs.map(doc => (
-                                        <div key={doc.document_id} className="flex items-center justify-between bg-[var(--color-bg-glass)] rounded-lg px-4 py-2 border border-[var(--color-border-subtle)]">
-                                            <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-[var(--color-accent-blue)]" />
-                                                <span className="text-sm text-[var(--color-text-secondary)]">{doc.filename}</span>
-                                                <span className="text-xs text-[var(--color-text-muted)]">
-                                                    ({(doc.size / 1024).toFixed(1)}KB)
+                                        <div key={doc.document_id} className="flex items-center justify-between bg-[var(--color-bg-glass)] rounded-lg px-4 py-2.5 border border-[var(--color-border-subtle)]">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                {doc.is_url ? (
+                                                    <Globe className="w-4 h-4 text-purple-400 shrink-0" />
+                                                ) : (
+                                                    <FileText className="w-4 h-4 text-[var(--color-accent-blue)] shrink-0" />
+                                                )}
+                                                <span className="text-sm text-[var(--color-text-secondary)] truncate">{doc.filename}</span>
+                                                <span className="text-xs text-[var(--color-text-muted)] shrink-0">
+                                                    {doc.is_url ? `${(doc.size / 1000).toFixed(1)}k chars` : `${(doc.size / 1024).toFixed(1)}KB`}
                                                 </span>
                                             </div>
-                                            <button onClick={() => removeDoc(doc.document_id)} className="p-1 hover:bg-white/10 rounded">
+                                            <button onClick={() => removeDoc(doc.document_id)} className="p-1 hover:bg-white/10 rounded shrink-0 ml-2">
                                                 <X className="w-3 h-3 text-[var(--color-text-muted)]" />
                                             </button>
                                         </div>

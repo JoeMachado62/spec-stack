@@ -4,6 +4,7 @@ const { calculateCompletenessScore, getGapSummary } = require('../utils/complete
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const cheerio = require('cheerio');
 
 // Configure multer for document uploads
 const uploadDir = path.resolve(__dirname, '../../uploads');
@@ -455,6 +456,144 @@ const uploadDocuments = async (req, res) => {
     }
 };
 
+/**
+ * Scrape a URL and save its text content as a document
+ */
+const scrapeUrl = async (req, res) => {
+    try {
+        let { url } = req.body;
+        if (!url || typeof url !== 'string') {
+            return res.status(400).json({ error: 'Please provide a valid URL.' });
+        }
+
+        // Normalize URL
+        url = url.trim();
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+        }
+
+        const spec = await Specification.findOne({
+            where: { spec_id: req.params.specId },
+            include: [{ model: Project, as: 'project', where: { user_id: req.userId } }]
+        });
+
+        if (!spec) return res.status(404).json({ error: 'Specification not found.' });
+
+        // Handle Google Docs/Sheets shared links → convert to plain text export
+        let fetchUrl = url;
+        const gdocMatch = url.match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+        const gsheetMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+        if (gdocMatch) {
+            fetchUrl = `https://docs.google.com/document/d/${gdocMatch[1]}/export?format=txt`;
+        } else if (gsheetMatch) {
+            fetchUrl = `https://docs.google.com/spreadsheets/d/${gsheetMatch[1]}/export?format=csv`;
+        }
+
+        console.log(`[Scrape] Fetching: ${fetchUrl}`);
+
+        // Allow self-signed certs in dev for outgoing HTTP fetches
+        const origTLS = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        if (process.env.NODE_ENV !== 'production') {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+        }
+
+        const response = await fetch(fetchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; SpecStack/1.0; +https://prdwizard.com)',
+                'Accept': 'text/html,application/xhtml+xml,text/plain,text/csv,*/*',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(15000), // 15s timeout
+        });
+
+        // Restore TLS setting
+        if (origTLS === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        else process.env.NODE_TLS_REJECT_UNAUTHORIZED = origTLS;
+
+        if (!response.ok) {
+            return res.status(422).json({
+                error: `Could not fetch URL (HTTP ${response.status}). Make sure the page is publicly accessible.`
+            });
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        const rawBody = await response.text();
+
+        let extractedText = '';
+        let title = url;
+
+        if (contentType.includes('text/html')) {
+            // Parse HTML and extract readable text
+            const $ = cheerio.load(rawBody);
+
+            // Remove non-content elements
+            $('script, style, nav, footer, header, iframe, noscript, svg, [role="navigation"], [role="banner"]').remove();
+
+            // Try to get title
+            title = $('title').text().trim() || $('h1').first().text().trim() || url;
+
+            // Extract main content (try article/main first, fall back to body)
+            let contentEl = $('article').first();
+            if (contentEl.length === 0) contentEl = $('main').first();
+            if (contentEl.length === 0) contentEl = $('[role="main"]').first();
+            if (contentEl.length === 0) contentEl = $('body');
+
+            extractedText = contentEl.text()
+                .replace(/\s+/g, ' ')          // collapse whitespace
+                .replace(/\n\s*\n/g, '\n\n')   // normalize paragraphs
+                .trim();
+        } else {
+            // Plain text, CSV, etc.
+            extractedText = rawBody.trim();
+            title = gdocMatch ? 'Google Doc' : gsheetMatch ? 'Google Sheet' : new URL(url).hostname;
+        }
+
+        if (!extractedText || extractedText.length < 10) {
+            return res.status(422).json({
+                error: 'Could not extract meaningful text from this URL. The page may be empty or require login.'
+            });
+        }
+
+        // Cap at 50k chars
+        const cappedText = extractedText.substring(0, 50000);
+
+        // Save to documents table
+        const doc = await Document.create({
+            user_id: req.userId,
+            project_id: spec.project_id,
+            source: 'upload',
+            filename: title.substring(0, 200),
+            content_text: cappedText,
+            source_ref: url,
+            metadata: {
+                source_type: 'url',
+                original_url: url,
+                content_type: contentType,
+                chars_extracted: cappedText.length,
+                scraped_at: new Date().toISOString(),
+            },
+        });
+
+        console.log(`[Scrape] ✅ Extracted ${cappedText.length} chars from ${url}`);
+
+        res.json({
+            document: {
+                document_id: doc.document_id,
+                filename: title.substring(0, 200),
+                source_url: url,
+                chars: cappedText.length,
+                content_preview: cappedText.substring(0, 300),
+            },
+        });
+    } catch (error) {
+        console.error('Scrape URL error:', error);
+        if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+            return res.status(422).json({ error: 'URL took too long to respond (15s timeout). Try a different page.' });
+        }
+        res.status(500).json({ error: 'Failed to scrape URL. Make sure it is publicly accessible.' });
+    }
+};
+
 module.exports = {
     getSpecification,
     processStage1,
@@ -466,4 +605,5 @@ module.exports = {
     updateStageData,
     uploadDocuments,
     upload,
+    scrapeUrl,
 };
